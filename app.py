@@ -1,64 +1,73 @@
 import streamlit as st
 from inference_sdk import InferenceHTTPClient
-from PIL import Image
-import numpy as np
 import cv2
+import numpy as np
+from PIL import Image
 
-st.title("🐔 Poultry Counting Web App (Multi-Image)")
-
-# Initialize the Roboflow HTTP client
-CLIENT = InferenceHTTPClient(
-    api_url="https://detect.roboflow.com",
-    api_key="BrgrhWWJhrjyx7RgkiEd"
+# 1. Page Configuration for Thesis Portfolio & SEO
+st.set_page_config(
+    page_title="Deep Litter Poultry Bird Counter | Thesis Project",
+    page_icon="🐔",
+    layout="wide"
 )
 
-# Enable multiple file uploads using accept_multiple_files=True
-uploaded_files = st.file_uploader("Upload multiple poultry pen images", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+st.title("🐔 Deep Litter Poultry Bird Counter")
+st.write("""
+Automated bird detection and counting system for deep litter housing environments. 
+Upload multiple pen images simultaneously from your four-side capture protocol to calculate total bird counts.
+""")
+
+# 2. Configure Roboflow Client
+CLIENT = InferenceHTTPClient(
+    api_url="https://detect.roboflow.com",
+    api_key="YOUR_ROBOFLOW_API_KEY"  # Replace with your actual Roboflow API key
+)
+
+# 3. Multi-File Image Upload Section
+uploaded_files = st.file_uploader(
+    "Choose poultry pen images...", 
+    type=["jpg", "jpeg", "png"], 
+    accept_multiple_files=True
+)
 
 if uploaded_files:
-    if st.button("Run Batch Bird Count"):
-        with st.spinner("Analyzing all images with Roboflow..."):
-            for idx, uploaded_file in enumerate(uploaded_files):
+    st.info(f"Loaded {len(uploaded_files)} image(s) for batch processing.")
+    
+    if st.button("Run Batch Bird Detection"):
+        with st.spinner("Processing images, enhancing contrast, and counting birds..."):
+            for i, uploaded_file in enumerate(uploaded_files):
                 st.markdown(f"---")
-                st.subheader(f"Image {idx + 1}: {uploaded_file.name}")
+                st.subheader(f"Image {i+1}: {uploaded_file.name}")
                 
-                # Save each file temporarily
-                temp_filename = f"temp_image_{idx}.jpg"
-                with open(temp_filename, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
+                # Read uploaded file into OpenCV format
+                file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+                img_cv = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-                # Run your specific workflow for each image
-                result = CLIENT.run_workflow(
-                    workspace_name="dhineshkumars-workspace",
-                    workflow_id="deep-litter-bird-counter-vdeep-litter-bird-counter-zgtai-1-rfdetr-small-t1-logic",
-                    images={"image": temp_filename}
-                )
+                # Apply contrast/brightness enhancement to handle shadows
+                enhanced_img = cv2.convertScaleAbs(img_cv, alpha=1.2, beta=20)
                 
-                try:
-                    predictions = result[0]["predictions"]["predictions"]
-                    total_count = len(predictions)
-                    
-                    st.metric(label=f"Birds Counted in {uploaded_file.name}", value=total_count)
-                    
-                    # Load image with OpenCV to draw bounding boxes
-                    img = cv2.imread(temp_filename)
-                    
-                    for pred in predictions:
-                        x = int(pred["x"])
-                        y = int(pred["y"])
-                        w = int(pred["width"])
-                        h = int(pred["height"])
-                        
-                        x1 = int(x - (w / 2))
-                        y1 = int(y - (h / 2))
-                        x2 = int(x + (w / 2))
-                        y2 = int(y + (h / 2))
-                        
-                        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 4)
-                    
-                    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    st.image(img_rgb, caption=f"Detected Birds: {total_count}", use_column_width=True)
-                    
-                except Exception as e:
-                    st.error(f"Error parsing results for {uploaded_file.name}: {e}")
-                    st.write(result)
+                # Save temporarily for Roboflow inference SDK
+                temp_path = f"temp_enhanced_{i}.jpg"
+                cv2.imwrite(temp_path, enhanced_img)
+                
+                # Run Roboflow Workflow / Model Inference
+                result = CLIENT.infer(temp_path, model_id="deep-litter-bird-counter-zgtai/1")
+                
+                # Extract predictions
+                predictions = result.get("predictions", [])
+                count = len(predictions)
+                
+                # Draw bounding boxes on detected birds
+                for pred in predictions:
+                    x = int(pred["x"] - pred["width"] / 2)
+                    y = int(pred["y"] - pred["height"] / 2)
+                    w = int(pred["width"])
+                    h = int(pred["height"])
+                    cv2.rectangle(enhanced_img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+                # Convert image back for Streamlit display
+                enhanced_img_rgb = cv2.cvtColor(enhanced_img, cv2.COLOR_BGR2RGB)
+                
+                # Display metrics and processed image side-by-side or stacked
+                st.metric(label=f"Total Birds Counted ({uploaded_file.name})", value=count)
+                st.image(enhanced_img_rgb, caption=f"Processed Output: {uploaded_file.name} ({count} birds)", use_column_width=True)
